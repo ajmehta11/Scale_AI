@@ -2,34 +2,41 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 from uuid import uuid4
 import threading
-import math
+from embeddings import Embeddings
+from dotenv import load_dotenv
+import os
+
 
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
 
-
+load_dotenv()
+api_key = os.getenv("COHERE_API_KEY")
+embedding_model = Embeddings(api_key=api_key)
 
 class Chunk:
-    def __init__(self, text: str, embedding: List[float], document_id: str, metadata: Optional[Dict[str, Any]] = None,chunk_id: Optional[str] = None):
+    def __init__(self, text: str, embedding_model, document_id: str, metadata: Optional[Dict[str, Any]] = None, chunk_id: Optional[str] = None):
         self.id: str = chunk_id or str(uuid4())
         self.text: str = text
-        self.embedding: List[float] = list(embedding)
         self.document_id: str = document_id
         self.metadata: Dict[str, Any] = dict(metadata or {})
         self.created_at: datetime = _utcnow()
         self.updated_at: datetime = _utcnow()
         self._lock = threading.RLock()
+        self._embedding_model = embedding_model
+        self.embedding: List[float] = self._embedding_model.get_embedding(text)
 
     def update_text(self, new_text: str):
         with self._lock:
             self.text = new_text
+            self.embedding = self._embedding_model.get_embedding(new_text)
             self.updated_at = _utcnow()
 
-    def update_embedding(self, new_embedding: List[float]):
-        with self._lock:
-            self.embedding = list(new_embedding)
-            self.updated_at = _utcnow()
+    # def update_embedding(self, new_embedding: List[float]):
+    #     with self._lock:
+    #         self.embedding = list(new_embedding)
+    #         self.updated_at = _utcnow()
 
     def update_metadata(self, new_metadata: Dict[str, Any]):
         with self._lock:
@@ -62,7 +69,7 @@ class Chunk:
 
 
 class Document:
-    def __init__(self, name: str, library_id: str, metadata: Optional[Dict[str, Any]] = None,  document_id: Optional[str] = None):
+    def __init__(self, name: str, library_id: str, metadata: Optional[Dict[str, Any]] = None, document_id: Optional[str] = None):
         self.id: str = document_id or str(uuid4())
         self.name: str = name
         self.library_id: str = library_id
@@ -118,7 +125,7 @@ class Document:
 
 
 class Library:
-    def __init__( self, name: str, metadata: Optional[Dict[str, Any]] = None, library_id: Optional[str] = None):
+    def __init__(self, name: str, metadata: Optional[Dict[str, Any]] = None, library_id: Optional[str] = None):
         self.id: str = library_id or str(uuid4())
         self.name: str = name
         self.metadata: Dict[str, Any] = dict(metadata or {})

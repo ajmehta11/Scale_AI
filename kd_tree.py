@@ -1,20 +1,23 @@
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import threading
+import heapq
 import math
 from model import Chunk
 
 
-class KDNode:    
+class KDNode:
     def __init__(self, chunk_id: str, embedding: List[float], axis: int):
         self.chunk_id = chunk_id
-        self.embedding = embedding
+        self.embedding = embedding  
         self.axis = axis
-        self.left: Optional[KDNode] = None
-        self.right: Optional[KDNode] = None
+        self.left: Optional["KDNode"] = None
+        self.right: Optional["KDNode"] = None
+
 
 
 class KDTreeIndex:
-    
+
+
     def __init__(self, library_id: str):
         self.library_id: str = library_id
         self.root: Optional[KDNode] = None
@@ -22,14 +25,17 @@ class KDTreeIndex:
         self.embeddings_cache: Dict[str, List[float]] = {}
         self._lock = threading.RLock()
         self._needs_rebuild = False
-    
+
     def insert(self, chunk_id: str, embedding: List[float]) -> None:
+        unit = self._normalize(embedding)
+        if unit is None:
+            raise ValueError("Embedding must have non-zero norm.")
         with self._lock:
             if chunk_id not in self.chunk_ids:
                 self.chunk_ids.append(chunk_id)
-                self.embeddings_cache[chunk_id] = list(embedding)
+                self.embeddings_cache[chunk_id] = unit
                 self._needs_rebuild = True
-    
+
     def delete(self, chunk_id: str) -> bool:
         with self._lock:
             if chunk_id in self.chunk_ids:
@@ -38,168 +44,164 @@ class KDTreeIndex:
                 self._needs_rebuild = True
                 return True
             return False
-    
+
     def update(self, chunk_id: str, new_embedding: List[float]) -> bool:
+        unit = self._normalize(new_embedding)
+        if unit is None:
+            raise ValueError("Embedding must have non-zero norm.")
         with self._lock:
             if chunk_id in self.embeddings_cache:
-                self.embeddings_cache[chunk_id] = list(new_embedding)
+                self.embeddings_cache[chunk_id] = unit
                 self._needs_rebuild = True
                 return True
             return False
-    
-    def build(self) -> None:
 
+    def build(self) -> None:
         with self._lock:
             if not self.chunk_ids:
                 self.root = None
                 self._needs_rebuild = False
                 return
-            
+
             items = [(cid, self.embeddings_cache[cid]) for cid in self.chunk_ids]
-            
             self.root = self._build_recursive(items, depth=0)
             self._needs_rebuild = False
-    
-    def _build_recursive(
-        self,
-        items: List[Tuple[str, List[float]]],
-        depth: int
-    ) -> Optional[KDNode]:
-        
-        if not items:
-            return None
-        
-        dimensions = len(items[0][1])
-        axis = depth % dimensions
-        
-        items.sort(key=lambda x: x[1][axis])
-        
-        median_idx = len(items) // 2
-        chunk_id, embedding = items[median_idx]
-        
-        node = KDNode(chunk_id, embedding, axis)
-        
-        node.left = self._build_recursive(items[:median_idx], depth + 1)
-        node.right = self._build_recursive(items[median_idx + 1:], depth + 1)
-        
-        return node
-    
+
     def search(
         self,
         query_embedding: List[float],
         chunks_map: Dict[str, Chunk],
         k: int = 10,
-        metadata_filter: Optional[Dict[str, any]] = None
+        metadata_filter: Optional[Dict[str, Any]] = None
     ) -> List[Tuple[str, float]]:
+
+        q = self._normalize(query_embedding)
+        if q is None:
+            return []
 
         with self._lock:
             if self._needs_rebuild:
                 self.build()
-            
-            if self.root is None:
-                return []
-            
-            best_results: List[Tuple[float, str]] = []
-            
-            self._search_recursive(
-                node=self.root,
-                query=query_embedding,
-                chunks_map=chunks_map,
-                metadata_filter=metadata_filter,
-                best_results=best_results,
-                k=k
-            )
-            
-            results = [(chunk_id, sim) for sim, chunk_id in best_results]
-            results.sort(key=lambda x: x[1], reverse=True)
-            
-            return results
-    
+            root = self.root
+
+        if root is None or k <= 0:
+            return []
+
+        best_heap: List[Tuple[float, str]] = []
+
+        self._search_recursive(
+            node=root,
+            query=q,
+            chunks_map=chunks_map,
+            metadata_filter=metadata_filter,
+            best_heap=best_heap,
+            k=k,
+        )
+
+        best_heap.sort(key=lambda x: x[0], reverse=True)
+        return [(cid, sim) for (sim, cid) in best_heap]
+
+    def _build_recursive(
+        self,
+        items: List[Tuple[str, List[float]]],
+        depth: int
+    ) -> Optional[KDNode]:
+        if not items:
+            return None
+
+        dims = len(items[0][1])
+        axis = depth % dims
+        items.sort(key=lambda x: x[1][axis])
+
+        mid = len(items) // 2
+        chunk_id, embedding = items[mid]
+        node = KDNode(chunk_id, embedding, axis)
+
+        node.left = self._build_recursive(items[:mid], depth + 1)
+        node.right = self._build_recursive(items[mid + 1:], depth + 1)
+        return node
+
     def _search_recursive(
         self,
         node: Optional[KDNode],
         query: List[float],
         chunks_map: Dict[str, Chunk],
-        metadata_filter: Optional[Dict[str, any]],
-        best_results: List[Tuple[float, str]],
+        metadata_filter: Optional[Dict[str, Any]],
+        best_heap: List[Tuple[float, str]],
         k: int
     ) -> None:
-
         if node is None:
             return
-        
-        chunk = chunks_map.get(node.chunk_id)
-        if chunk and (not metadata_filter or self._matches_filter(chunk, metadata_filter)):
-            similarity = self._cosine_similarity(query, node.embedding)
-            
-            if len(best_results) < k:
-                best_results.append((similarity, node.chunk_id))
-                best_results.sort(reverse=True) 
-            elif similarity > best_results[-1][0]:
-                best_results[-1] = (similarity, node.chunk_id)
-                best_results.sort(reverse=True)
-        
+
+        ch = chunks_map.get(node.chunk_id)
+        if ch is not None and (not metadata_filter or self._matches_filter(ch, metadata_filter)):
+            sim = self._cosine_similarity_unit(query, node.embedding)
+            if len(best_heap) < k:
+                heapq.heappush(best_heap, (sim, node.chunk_id))
+            elif sim > best_heap[0][0]:
+                heapq.heapreplace(best_heap, (sim, node.chunk_id))
+
         axis = node.axis
         diff = query[axis] - node.embedding[axis]
-        
-        if diff < 0:
-            closer_node = node.left
-            further_node = node.right
-        else:
-            closer_node = node.right
-            further_node = node.left
-        
-        self._search_recursive(
-            closer_node, query, chunks_map, metadata_filter, best_results, k
-        )
-        
+        closer, further = (node.left, node.right) if diff < 0 else (node.right, node.left)
 
-        if len(best_results) < k or self._should_search_other_side(query, node, best_results[-1][0]):
-            self._search_recursive(
-                further_node, query, chunks_map, metadata_filter, best_results, k
-            )
-    
+        self._search_recursive(closer, query, chunks_map, metadata_filter, best_heap, k)
+
+
+        worst_sim = best_heap[0][0] if len(best_heap) == k else -1.0  
+        if self._should_search_other_side(query, node, worst_sim, len(best_heap), k):
+            self._search_recursive(further, query, chunks_map, metadata_filter, best_heap, k)
+
     def _should_search_other_side(
         self,
         query: List[float],
         node: KDNode,
-        worst_similarity: float
+        worst_similarity: float,
+        heap_size: int,
+        k: int
     ) -> bool:
-        return True  
-    
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        if len(vec1) != len(vec2):
-            raise ValueError(f"Vector dimensions must match: {len(vec1)} != {len(vec2)}")
-        
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
-        magnitude1 = math.sqrt(sum(a * a for a in vec1))
-        magnitude2 = math.sqrt(sum(b * b for b in vec2))
-        
-        if magnitude1 == 0 or magnitude2 == 0:
-            return 0.0
-        
-        return dot_product / (magnitude1 * magnitude2)
-    
-    def _matches_filter(self, chunk: Chunk, metadata_filter: Dict[str, any]) -> bool:
-        chunk_metadata = chunk.get_metadata()
-        
-        for key, value in metadata_filter.items():
-            if key not in chunk_metadata or chunk_metadata[key] != value:
+        if heap_size < k:
+            return True  # need more candidates
+
+        s = max(min(worst_similarity, 1.0), -1.0)
+        r = math.sqrt(max(0.0, 2.0 * (1.0 - s)))
+
+        axis = node.axis
+        slab_distance = abs(query[axis] - node.embedding[axis])
+        return slab_distance <= r
+
+    @staticmethod
+    def _normalize(vec: List[float]) -> Optional[List[float]]:
+        norm2 = sum(x * x for x in vec)
+        if norm2 <= 0.0:
+            return None
+        inv = 1.0 / math.sqrt(norm2)
+        return [x * inv for x in vec]
+
+    @staticmethod
+    def _cosine_similarity_unit(v1: List[float], v2: List[float]) -> float:
+        # For unit vectors, cosine == dot product
+        return sum(a * b for a, b in zip(v1, v2))
+
+    @staticmethod
+    def _matches_filter(chunk: Chunk, metadata_filter: Dict[str, Any]) -> bool:
+        md = chunk.get_metadata()
+        for k, v in metadata_filter.items():
+            if k not in md or md[k] != v:
                 return False
-        
         return True
-    
+
     def get_size(self) -> int:
         with self._lock:
             return len(self.chunk_ids)
-    
+
     def clear(self) -> None:
         with self._lock:
             self.chunk_ids.clear()
             self.embeddings_cache.clear()
             self.root = None
             self._needs_rebuild = False
-    
+
     def needs_rebuild(self) -> bool:
         with self._lock:
             return self._needs_rebuild

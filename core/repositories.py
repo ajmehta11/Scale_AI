@@ -33,7 +33,13 @@ class Repository:
         chunk_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> model.Chunk:
-        chunk = model.Chunk(text=text, document_id=document_id, id=chunk_id, metadata=metadata)
+        
+        chunk = model.Chunk(text=text, document_id=document_id)
+        if chunk_id:
+            object.__setattr__(chunk, 'id', chunk_id)
+        if metadata:
+            chunk.metadata.update(metadata)
+
         chunk.compute_embedding()
         self.add_chunk(chunk)
         return chunk

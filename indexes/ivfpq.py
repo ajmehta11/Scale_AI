@@ -1,22 +1,128 @@
 import numpy as np
 import heapq
+import threading
 from typing import List, Dict, Tuple, Optional, Set
 
 class IVFPQIndex:
     def __init__(self, library_id: str, num_clusters: int = 100, num_subspaces: int = 8,
                  num_pq_clusters: int = 256, training_iterations: int = 10,
                  nprobe: int = 10, seed: int = 42):
-        ...
-        self._codes_np: Optional[np.ndarray] = None        
-        self._ids: List[str] = []                          
-        self._id_to_row: Dict[str, int] = {}              
-        self._row_cluster: List[int] = []                 
-        self._row_pos_in_cluster: List[int] = []         
+        self.library_id = library_id
+        self.num_clusters = num_clusters
+        self.num_subspaces = num_subspaces
+        self.num_pq_clusters = num_pq_clusters
+        self.training_iterations = training_iterations
+        self.nprobe = nprobe
+        self.seed = seed
+        
+        self.dimension: Optional[int] = None
+        self.subspace_dim: int = 0
+        self._trained: bool = False
+        self._lock = threading.RLock()
+        
+        self.coarse_centroids: List[List[float]] = []
+        self.pq_codebooks: List[List[List[float]]] = []
+        self.embeddings_cache: Dict[str, List[float]] = {}
+        
+        self._codes_np: Optional[np.ndarray] = None
+        self._ids: List[str] = []
+        self._id_to_row: Dict[str, int] = {}
+        self._row_cluster: List[int] = []
+        self._row_pos_in_cluster: List[int] = []
+        self.inverted_lists: List[List[int]] = [[] for _ in range(num_clusters)]
 
-        self.inverted_lists: List[List[int]] = []          
+    def train(self, embeddings: List[List[float]]) -> None:
+        with self._lock:
+            if self._trained:
+                return
+            
+            if not embeddings:
+                return
+            
+            self.dimension = len(embeddings[0])
+            self.subspace_dim = self.dimension // self.num_subspaces
+            
+            X = np.array(embeddings, dtype=np.float32)
+            
+            self.coarse_centroids = self._kmeans(X, min(self.num_clusters, len(X)))
+            
+            self.pq_codebooks = []
+            for m in range(self.num_subspaces):
+                start_idx = m * self.subspace_dim
+                end_idx = start_idx + self.subspace_dim
+                subvector = X[:, start_idx:end_idx]
+                
+                codebook = self._kmeans(subvector, min(self.num_pq_clusters, len(subvector)))
+                self.pq_codebooks.append(codebook)
+            
+            self._trained = True
 
-        ...
+    def _kmeans(self, X: np.ndarray, k: int, max_iter: int = 10) -> List[List[float]]:
+        if len(X) == 0:
+            return []
+        
+        if len(X) <= k:
+            return X.tolist()
+        
+        np.random.seed(self.seed)
+        indices = np.random.choice(len(X), k, replace=False)
+        centroids = X[indices].copy()
+        
+        for _ in range(max_iter):
+            distances = np.sum((X[:, None, :] - centroids[None, :, :]) ** 2, axis=2)
+            labels = np.argmin(distances, axis=1)
+            
+            new_centroids = centroids.copy()
+            for i in range(k):
+                mask = labels == i
+                if np.sum(mask) > 0:
+                    new_centroids[i] = np.mean(X[mask], axis=0)
+            
+            if np.allclose(centroids, new_centroids):
+                break
+            
+            centroids = new_centroids
+        
+        return centroids.tolist()
 
+    def _find_nearest_cluster(self, embedding: List[float]) -> int:
+        min_dist = float('inf')
+        nearest = 0
+        
+        for i, centroid in enumerate(self.coarse_centroids):
+            dist = self._euclidean_distance(embedding, centroid)
+            if dist < min_dist:
+                min_dist = dist
+                nearest = i
+        
+        return nearest
+
+    def _euclidean_distance(self, v1: List[float], v2: List[float]) -> float:
+        return sum((a - b) ** 2 for a, b in zip(v1, v2)) ** 0.5
+
+    def _subtract_vectors(self, v1: List[float], v2: List[float]) -> List[float]:
+        return [a - b for a, b in zip(v1, v2)]
+
+    def _encode_residual(self, residual: List[float]) -> List[int]:
+        codes = []
+        
+        for m in range(self.num_subspaces):
+            start_idx = m * self.subspace_dim
+            end_idx = start_idx + self.subspace_dim
+            subvector = residual[start_idx:end_idx]
+            
+            min_dist = float('inf')
+            nearest = 0
+            
+            for i, centroid in enumerate(self.pq_codebooks[m]):
+                dist = sum((a - b) ** 2 for a, b in zip(subvector, centroid))
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest = i
+            
+            codes.append(nearest)
+        
+        return codes
 
     def insert(self, chunk_id: str, embedding: List[float]) -> None:
         with self._lock:
@@ -28,9 +134,9 @@ class IVFPQIndex:
             cluster_id = self._find_nearest_cluster(embedding)
 
             residual = self._subtract_vectors(embedding, self.coarse_centroids[cluster_id])
-            pq_codes = self._encode_residual(residual)               # list[int] length = M
+            pq_codes = self._encode_residual(residual)
 
-            code_row = np.array(pq_codes, dtype=np.uint8)[None, :]   # shape [1, M]
+            code_row = np.array(pq_codes, dtype=np.uint8)[None, :]
             if self._codes_np is None:
                 self._codes_np = code_row
             else:
@@ -46,7 +152,6 @@ class IVFPQIndex:
             self._row_pos_in_cluster.append(pos)
 
             self.embeddings_cache[chunk_id] = list(embedding)
-
 
     def delete(self, chunk_id: str) -> bool:
         with self._lock:
@@ -87,7 +192,6 @@ class IVFPQIndex:
 
             return True
 
-
     def update(self, chunk_id: str, new_embedding: List[float]) -> bool:
         with self._lock:
             if chunk_id not in self._id_to_row:
@@ -96,13 +200,12 @@ class IVFPQIndex:
             self.insert(chunk_id, new_embedding)
             return True
 
-
     def search(
         self,
         query_embedding: List[float],
-        chunks_map: Dict[str, 'Chunk'],      
+        chunks_map: Dict[str, 'Chunk'],
         k: int = 10,
-        metadata_filter: Optional[Dict[str, any]] = None,  
+        metadata_filter: Optional[Dict[str, any]] = None,
         refine_factor: int = 3
     ) -> List[Tuple[str, float]]:
 
@@ -122,7 +225,7 @@ class IVFPQIndex:
             cluster_distances.sort(key=lambda x: x[1])
             probe_clusters = [c for c, _ in cluster_distances[:self.nprobe]]
 
-            approx_heap: List[Tuple[float, int]] = []  
+            approx_heap: List[Tuple[float, int]] = []
             target_candidates = k * max(1, refine_factor)
 
             subdim = self.subspace_dim
@@ -141,17 +244,17 @@ class IVFPQIndex:
 
                 LUT = np.empty((M, Ks), dtype=np.float32)
                 for m in range(M):
-                    cb = np.asarray(self.pq_codebooks[m], dtype=np.float32)  
-                    diff = cb - q_res_blocks[m][None, :]                      
-                    LUT[m, :] = np.sum(diff * diff, axis=1)                 
+                    cb = np.asarray(self.pq_codebooks[m], dtype=np.float32)
+                    diff = cb - q_res_blocks[m][None, :]
+                    LUT[m, :] = np.sum(diff * diff, axis=1)
 
-                codes = self._codes_np[rows, :]                           
-                codes_T = codes.T                                             
-                adc_mr = LUT[np.arange(M)[:, None], codes_T]                   
-                adc_rows = np.sum(adc_mr, axis=0)                              
+                codes = self._codes_np[rows, :]
+                codes_T = codes.T
+                adc_mr = LUT[np.arange(M)[:, None], codes_T]
+                adc_rows = np.sum(adc_mr, axis=0)
 
                 for row, dist_sq in zip(rows, adc_rows):
-                    score = -float(dist_sq)                                    
+                    score = -float(dist_sq)
                     if len(approx_heap) < target_candidates:
                         heapq.heappush(approx_heap, (score, row))
                     else:
@@ -183,14 +286,12 @@ class IVFPQIndex:
                 if not candidate_rows:
                     return []
 
-
             E = np.empty((len(candidate_rows), D), dtype=np.float32)
             ids = []
             for i, r in enumerate(candidate_rows):
                 cid = self._ids[r]
                 ids.append(cid)
                 E[i, :] = np.asarray(self.embeddings_cache[cid], dtype=np.float32)
-
 
             q_norm = np.linalg.norm(q)
             if q_norm == 0:
@@ -205,3 +306,16 @@ class IVFPQIndex:
             topk_sorted = topk_idx[np.argsort(-sims[topk_idx])]
 
             return [(ids[i], float(sims[i])) for i in topk_sorted]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._codes_np = None
+            self._ids = []
+            self._id_to_row = {}
+            self._row_cluster = []
+            self._row_pos_in_cluster = []
+            self.inverted_lists = [[] for _ in range(self.num_clusters)]
+            self.embeddings_cache = {}
+            self._trained = False
+            self.coarse_centroids = []
+            self.pq_codebooks = []

@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Brute Force Index
+  vector-db-brute:
+    build: .
+    container_name: vector-db-brute-force
+    ports:
+      - "8000:8000"
+    environment:
+      - COHERE_API_KEY=${COHERE_API_KEY}
+      - INDEX_TYPE=brute_force
+    volumes:
+      - ./data/brute_force:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # KD-Tree Index
+  vector-db-kdtree:
+    build: .
+    container_name: vector-db-kdtree
+    ports:
+      - "8001:8000"
+    environment:
+      - COHERE_API_KEY=${COHERE_API_KEY}
+      - INDEX_TYPE=kd_tree
+    volumes:
+      - ./data/kd_tree:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # LSH Index
+  vector-db-lsh:
+    build: .
+    container_name: vector-db-lsh
+    ports:
+      - "8002:8000"
+    environment:
+      - COHERE_API_KEY=${COHERE_API_KEY}
+      - INDEX_TYPE=lsh
+    volumes:
+      - ./data/lsh:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # IVFPQ Index
+  vector-db-ivfpq:
+    build: .
+    container_name: vector-db-ivfpq
+    ports:
+      - "8003:8000"
+    environment:
+      - COHERE_API_KEY=${COHERE_API_KEY}
+      - INDEX_TYPE=ivfpq
+    volumes:
+      - ./data/ivfpq:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  brute_force_data:
+  kd_tree_data:
+  lsh_data:
+  ivfpq_data:

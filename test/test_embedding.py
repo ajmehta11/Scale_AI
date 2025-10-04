@@ -1,4 +1,4 @@
-from embeddings import Embeddings
+from services.embeddings import Embeddings
 from dotenv import load_dotenv
 import os
 

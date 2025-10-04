@@ -33,7 +33,7 @@ class Repository:
         chunk_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> model.Chunk:
-        chunk = model.Chunk(text, document_id, chunk_id, metadata)
+        chunk = model.Chunk(text=text, document_id=document_id, id=chunk_id, metadata=metadata)
         chunk.compute_embedding()
         self.add_chunk(chunk)
         return chunk
@@ -266,31 +266,18 @@ class Repository:
                 self.index.clear()
 
         for lib_data in snapshot.get("libraries", []):
-            if hasattr(model.Library, "from_dict"):
-                lib = model.Library.from_dict(lib_data)
-            else:
-                lib = model.Library(lib_data.get("name", ""), lib_data.get("metadata", {}), lib_data.get("id"))
+            lib = model.Library.from_dict(lib_data)
             with self._lock:
                 self.libraries[lib.id] = lib
 
         for doc_data in snapshot.get("documents", []):
-            if hasattr(model.Document, "from_dict"):
-                doc = model.Document.from_dict(doc_data)
-            else:
-                doc = model.Document(doc_data.get("name", ""), doc_data.get("library_id", ""), doc_data.get("metadata", {}), doc_data.get("id"))
+            doc = model.Document.from_dict(doc_data)
             with self._lock:
                 self.documents[doc.id] = doc
 
         pairs: List[Tuple[str, List[float]]] = []
         for cdata in snapshot.get("chunks", []):
-            if hasattr(model.Chunk, "from_dict"):
-                chunk = model.Chunk.from_dict(cdata)
-            else:
-                chunk = model.Chunk(cdata.get("text", ""), cdata.get("document_id", ""), cdata.get("id"), cdata.get("metadata", {}))
-
-            emb = cdata.get("embedding")
-            if emb is not None:
-                chunk.update_embedding(list(emb))
+            chunk = model.Chunk.from_dict(cdata)
 
             with self._lock:
                 self.chunks[chunk.id] = chunk

@@ -88,6 +88,7 @@ curl http://localhost:8000/stats
 
 ## Testing
 
+### Unit Tests
 ```bash
 # Run all tests
 pytest test/ -v
@@ -95,7 +96,18 @@ pytest test/ -v
 # Run specific test file
 pytest test/test_api.py -v
 pytest test/test_basic.py -v
+pytest test/test_edge_cases.py -v
 ```
+
+### Comprehensive Index Testing
+Test all 4 index types (brute_force, kd_tree, lsh, ivfpq) with 300 chunks across multiple libraries and documents. The script automatically creates Docker containers for each index, loads data, runs searches, and compares performance.
+
+```bash
+export COHERE_API_KEY=your-api-key-here
+bash test_all_indexes.sh
+```
+
+This will test each index with 3 libraries, 5 documents per library, and 20 chunks per document. Results include load times, search latency, and throughput comparison.
 
 ## Project Structure
 

@@ -8,17 +8,27 @@ class BruteForceIndex:
     def __init__(self, library_id: str):
         self.library_id: str = library_id
         self.chunk_ids: List[str] = []
+        self.embeddings_cache: Dict[str, List[float]] = {}
         self._lock = threading.RLock()
     
-    def insert(self, chunk_id: str) -> None:
+    def insert(self, chunk_id: str, embedding: List[float]) -> None:
         with self._lock:
             if chunk_id not in self.chunk_ids:
                 self.chunk_ids.append(chunk_id)
+                self.embeddings_cache[chunk_id] = list(embedding)
     
     def delete(self, chunk_id: str) -> bool:
         with self._lock:
             if chunk_id in self.chunk_ids:
                 self.chunk_ids.remove(chunk_id)
+                self.embeddings_cache.pop(chunk_id, None)
+                return True
+            return False
+    
+    def update(self, chunk_id: str, new_embedding: List[float]) -> bool:
+        with self._lock:
+            if chunk_id in self.embeddings_cache:
+                self.embeddings_cache[chunk_id] = list(new_embedding)
                 return True
             return False
     
@@ -36,15 +46,16 @@ class BruteForceIndex:
             results: List[Tuple[str, float]] = []
             
             for chunk_id in self.chunk_ids:
-                chunk = chunks_map.get(chunk_id)
-                
-                if chunk is None:
+                embedding = self.embeddings_cache.get(chunk_id)
+                if embedding is None:
                     continue
                 
-                if metadata_filter and not self._matches_filter(chunk, metadata_filter):
-                    continue
+                if metadata_filter:
+                    chunk = chunks_map.get(chunk_id)
+                    if chunk is None or not self._matches_filter(chunk, metadata_filter):
+                        continue
                 
-                similarity = self._cosine_similarity(query_embedding, chunk.get_embedding())
+                similarity = self._cosine_similarity(query_embedding, embedding)
                 results.append((chunk_id, similarity))
             
             results.sort(key=lambda x: x[1], reverse=True)
@@ -54,14 +65,11 @@ class BruteForceIndex:
         if len(vec1) != len(vec2):
             raise ValueError(f"Vector dimensions must match: {len(vec1)} != {len(vec2)}")
         
-        # Calculate dot product
         dot_product = sum(a * b for a, b in zip(vec1, vec2))
         
-        # Calculate magnitudes
         magnitude1 = math.sqrt(sum(a * a for a in vec1))
         magnitude2 = math.sqrt(sum(b * b for b in vec2))
         
-        # Avoid division by zero
         if magnitude1 == 0 or magnitude2 == 0:
             return 0.0
         
@@ -86,3 +94,4 @@ class BruteForceIndex:
     def clear(self) -> None:
         with self._lock:
             self.chunk_ids.clear()
+            self.embeddings_cache.clear()

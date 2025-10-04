@@ -88,6 +88,15 @@ class IVFPQIndex:
             return True
 
 
+    def update(self, chunk_id: str, new_embedding: List[float]) -> bool:
+        with self._lock:
+            if chunk_id not in self._id_to_row:
+                return False
+            self.delete(chunk_id)
+            self.insert(chunk_id, new_embedding)
+            return True
+
+
     def search(
         self,
         query_embedding: List[float],

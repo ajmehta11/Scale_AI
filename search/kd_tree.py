@@ -87,7 +87,7 @@ class KDTreeIndex:
         if root is None or k <= 0:
             return []
 
-        best_heap: List[Tuple[float, str]] = []
+        best_heap: List[Tuple[float, str]] = [] ## best_heap[0] is WORST of current top-k
 
         self._search_recursive(
             node=root,

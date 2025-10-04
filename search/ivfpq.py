@@ -46,7 +46,6 @@ class IVFPQIndex:
             self._row_pos_in_cluster.append(pos)
 
             self.embeddings_cache[chunk_id] = list(embedding)
-            self.chunk_ids.append(chunk_id)
 
 
     def delete(self, chunk_id: str) -> bool:
@@ -83,12 +82,8 @@ class IVFPQIndex:
             self._row_cluster.pop()
             self._row_pos_in_cluster.pop()
 
-            if chunk_id in self.compressed_data:
-                del self.compressed_data[chunk_id]
             if chunk_id in self.embeddings_cache:
                 del self.embeddings_cache[chunk_id]
-            if chunk_id in self.chunk_ids:
-                self.chunk_ids.remove(chunk_id)
 
             return True
 

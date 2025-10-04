@@ -142,4 +142,3 @@ pytest test/test_basic.py -v
 COHERE_API_KEY=your-key-here    # Required
 INDEX_TYPE=brute_force          # Optional (default: brute_force)
 ```
-s

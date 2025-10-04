@@ -2,7 +2,7 @@ from typing import List, Dict, Tuple, Optional, Any
 import threading
 import heapq
 import math
-from model import Chunk
+from core.model import Chunk
 
 
 class KDNode:

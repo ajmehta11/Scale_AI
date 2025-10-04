@@ -5,7 +5,7 @@ from threading import RLock
 if TYPE_CHECKING:
     from model import Chunk, Document, Library
 
-import model
+import core.model as model
 
 
 class Repository:

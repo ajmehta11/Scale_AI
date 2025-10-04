@@ -1,7 +1,7 @@
 from typing import List, Dict, Tuple, Optional
 import threading
 import math
-from model import Chunk
+from core.model import Chunk
 
 
 class BruteForceIndex: 

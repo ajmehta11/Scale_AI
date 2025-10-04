@@ -15,6 +15,7 @@ from indexes.ivfpq import IVFPQIndex
 from services.embeddings import Embeddings
 
 
+
 class LibraryCreate(BaseModel):
     name: str
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
